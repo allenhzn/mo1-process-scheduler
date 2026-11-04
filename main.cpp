@@ -161,23 +161,14 @@ struct SharedState {
     std::uint64_t tick = 0;
     std::uint64_t nextProcessId = 0;
     std::atomic<bool> running{true};
-    std::atomic<bool> generating{true};
+    std::atomic<bool> generating{false};
 
     explicit SharedState(Config cfg) : config(std::move(cfg)) {}
     std::size_t coresUsedLastTick = 0;
 };
 
 void cpuTick(SharedState &s) {
-    bool anyCoreBusy = false;
     s.coresUsedLastTick = 0;
-
-    for (auto &c : s.cores)
-        if (c.currentProcess)
-            anyCoreBusy = true;
-
-    if (s.sleeping.empty() && s.ready.empty() && !anyCoreBusy && !s.generating)
-        // TODO (2026-11-04) check if we need to keep it as long as the scheduler is generating
-        s.running = false;
 
     for (auto it = s.sleeping.begin(); it != s.sleeping.end();) {
         if (--(*it)->sleepTicks == 0) {
@@ -343,25 +334,17 @@ void insertNewProcess(const std::string &name, SharedState &s) {
     s.ready.push_back(p);
 }
 
+constexpr auto TICK_DURATION = std::chrono::milliseconds(1);
+
 void schedulerLoop(SharedState &s) {
-    while (s.running) {
-        {
-            std::lock_guard<std::mutex> lock(s.m);
-            cpuTick(s);
-            if (s.tick > 100) {
-                s.generating = false;
-            }
-            if (s.tick == 32) {
-                std::string name = "screen_01";
-                insertNewProcess(name, s);
-            }
-            if (s.tick == 62) {
-                writeReport(std::cout, s);
-                writeProcessInfo(std::cout, s.processes["screen_01"]);
-            }
-        }
-        //std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+   while (s.running) {
+       {
+           std::lock_guard<std::mutex> lock(s.m);
+           cpuTick(s);
+       }
+       // sleep OUTSIDE the lock so the console thread can grab the mutex
+       std::this_thread::sleep_for(TICK_DURATION);
+   }
 }
 
 int main() {
