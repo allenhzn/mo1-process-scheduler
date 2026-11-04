@@ -328,9 +328,9 @@ void writeReport(std::ostream &out, const SharedState &s) {
         << "\n------------------------------------------------------------"
            "\n"
         << "Running processes:\n"
-        << running.rdbuf() << "\n"
+        << running.str() << "\n"
         << "Finished processes:\n"
-        << finished.rdbuf()
+        << finished.str()
         << "\n------------------------------------------------------------"
            "\n";
 }
@@ -573,6 +573,13 @@ int main() {
                                            "Luna, Jacoba", "Marquez, Miguel"};
     const ::std::string DATE = "\nVersion date: 2026-11-05\n";
 
+    std::cout << R"ascii(
+  ____ ____   ___  ____  _____ ______   __
+ / ___/ ___| / _ \|  _ \| ____/ ___\ \ / /
+| |   \___ \| | | | |_) |  _| \___ \\ V / 
+| |___ ___) | |_| |  __/| |___ ___) || |  
+ \____|____/ \___/|_|   |_____|____/ |_|  
+)ascii" << "----------------------------------------\n";
     std::cout << "Welcome to CSOPESY!" << "\n\n";
     std::cout << "Group developers:" << '\n';
     for (std::string dev : developers) {
