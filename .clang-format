@@ -1,0 +1,7 @@
+---
+BasedOnStyle: LLVM
+AlignOperands: AlignAfterOperator
+BreakBeforeBinaryOperators: NonAssignment
+ColumnLimit: 100
+ReflowComments: False
+IndentWidth: 4

@@ -1,0 +1,12 @@
+"Lines of Code" - so it looks like every base instruction is one LOC? 
+and for loops would be however many instructions are contained inside, maybe considering nesting
+
+since the process needs to display total LOC and progress we'd have to update the running count 
+every time a new Instruction is added, which would entail calculating the total LOC for a for loop
+probably give instructions a method to return their LOC actually that sounds good
+
+
+The range of instruction length per process can be set through the “config.txt.” - lool no it can't???
+just add that I guess
+
+separate list of sleeping processes -> upon sleep transfer current process

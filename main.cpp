@@ -1,0 +1,181 @@
+/*
+“initialize” – initialize the processor configuration of the application. This
+must be called before any other command could be recognized, aside from “exit”.
+“exit” – terminates the console. “screen” – see additional details.
+“scheduler-start” (formerly scheduler-test) – continuously generates a batch of
+dummy processes for the CPU scheduler. Each process is accessible via the
+“screen” command. “scheduler-stop” – stops generating dummy processes.
+“report-util” – for generating CPU utilization report. See additional details.
+*/
+
+#include "core.h"
+#include "factory.h"
+#include "instructions.h"
+#include "process.h"
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <iostream>
+#include <list>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+struct Config {
+    int num_cpu;                      // 1 - 128
+    std::string scheduler;            // fcfs or rr
+    std::uint32_t quantum_cycles;     // 1 - 2^32
+    std::uint32_t batch_process_freq; // 1 - 2^32
+    std::uint32_t min_ins;            // 1 - 2^32
+    std::uint32_t max_ins;            // 1 - 2^32
+    std::uint32_t delays_per_exec;    // 0 - 2^32
+};
+
+struct SharedState {
+    std::mutex m;
+    std::unordered_map<std::string, std::shared_ptr<Process>> processes;
+    std::deque<std::shared_ptr<Process>> ready;
+    std::list<std::shared_ptr<Process>> sleeping;
+    std::vector<std::shared_ptr<Process>> finished;
+    // linked list for fast removes
+
+    std::vector<Core> cores;
+    Config config;
+    std::uint64_t tick = 0;
+    std::uint64_t nextProcessId = 0;
+    std::atomic<bool> running{true};
+    std::atomic<bool> generating{true};
+
+    explicit SharedState(Config cfg) : config(std::move(cfg)) {}
+    std::size_t coresUsedLastTick = 0;
+};
+
+void cpuTick(SharedState &s) {
+    bool anyCoreBusy = false;
+    s.coresUsedLastTick = 0;
+
+    for (auto &c : s.cores)
+        if (c.currentProcess)
+            anyCoreBusy = true;
+
+    if (s.sleeping.empty() && s.ready.empty() && !anyCoreBusy && !s.generating)
+        // TODO (2026-11-04) check if we need to keep it as long as the scheduler is generating
+        s.running = false;
+
+    for (auto it = s.sleeping.begin(); it != s.sleeping.end();) {
+        if (--(*it)->sleepTicks == 0) {
+            s.ready.push_back(*it);
+            it = s.sleeping.erase(it);
+        } else {
+            it++;
+        }
+    }
+    // wake sleeping processes
+
+    for (auto &core : s.cores) {
+        if (!core.currentProcess && !s.ready.empty()) {
+            core.currentProcess = std::move(s.ready.front());
+            s.ready.pop_front();
+            core.currentProcess->executingCore = core.id;
+            core.quantumUsed = 0;
+        }
+    }
+    // assign processes to active cores
+
+    for (auto &core : s.cores) {
+        if (!core.currentProcess)
+            continue;
+
+        s.coresUsedLastTick++;
+        auto &p = core.currentProcess;
+        p->execInstruction();
+        core.quantumUsed++;
+
+        bool release = false;
+        if (p->finished()) {
+            s.finished.push_back(p);
+            release = true;
+        } else if (p->sleepTicks > 0) {
+            s.sleeping.push_back(p);
+            release = true;
+        } else if (s.config.scheduler == "rr" && core.quantumUsed >= s.config.quantum_cycles) {
+            s.ready.push_back(p);
+            release = true;
+        }
+        if (release)
+            core.currentProcess.reset();
+    }
+
+    if (s.generating && s.config.batch_process_freq > 0
+        && s.tick % s.config.batch_process_freq == 0) {
+        std::string name = "p" + std::to_string(s.nextProcessId++);
+        auto p = makeProcess(name, s.config.min_ins, s.config.max_ins);
+        s.processes[name] = p;
+        s.ready.push_back(p);
+    }
+    // process gen comes at the end of the CPU cycle
+
+    s.tick++;
+}
+
+void schedulerLoop(SharedState &s) {
+    while (s.running) {
+        {
+            std::lock_guard<std::mutex> lock(s.m);
+            cpuTick(s);
+            if (s.tick > 1000) {
+                s.generating = false;
+            }
+        }
+        // std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+int main() {
+    std::vector<std::string> developers = {"Hizon, Allen", "Infante, Charles", "Luna, Jacoba",
+                                           "Marquez, Miguel"};
+    const ::std::string DATE = "\nVersion date: 2026-11-05\n";
+
+    std::cout << "Welcome to CSOPESY!" << "\n\n";
+    std::cout << "Group developers:" << '\n';
+    for (std::string dev : developers) {
+        std::cout << dev << '\n';
+    }
+
+    std::cout << DATE;
+
+    auto config = Config{8, "rr", 20, 1, 1, 100, 0};
+    // TODO (2026-11-03) set based on config.txt
+
+    auto state = SharedState{config};
+    state.cores.resize(config.num_cpu);
+    for (std::size_t i = 0; i < state.cores.size(); i++) {
+        state.cores[i].id = static_cast<int>(i);
+    }
+
+    schedulerLoop(state);
+
+    for (const auto &p : state.processes) {
+        p.second->printLogs();
+    }
+}
+
+/* CPU scheduling design
+    every tick {
+        - check sleeping process list, decrement sleeps 
+        - move non sleeping processes to ready queue
+        - assign processes from ready queue to idle cores
+
+        for (Core : Cores) {
+            execute process
+            ok also for print logs it should show the core # used to execute it 
+        }
+        no need for multithreading or anything since it's simulated CPU ticks
+        edit 11/04 ok we need multithreading but like for a different thing ok 
+    }
+    */

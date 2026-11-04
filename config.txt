@@ -1,0 +1,29 @@
+num-cpu 4
+scheduler "rr"
+quantum-cycles 5
+batch-process-freq 1
+
+
+num-cpu 
+Number of CPUs available. The range is [1, 128].
+
+scheduler 
+The scheduler algorithm: “fcfs” or “rr”.
+
+quantum-cycles 
+The time slice is given for each processor if a round-robin scheduler is used. Has no effect on other schedulers. 
+The range is [1, 2^32].
+
+batch-process-freq 
+The frequency of generating processes in the “scheduler-start” command in CPU cycles. The range is [1, 2^32]. 
+If one, a new process is generated at the end of each CPU cycle.
+
+min-ins 
+The minimum instructions/command per process. The range is [1, 2^32].
+
+max-ins 
+The maximum instructions/command per process. The range is [1, 2^32].
+
+delays-per-exec 
+Delay before executing the next instruction in CPU cycles. The delay is a “busy-waiting” scheme wherein the process remains in the CPU. 
+The range is [0, 2^32]. If zero, each instruction is executed per CPU cycle.
