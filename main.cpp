@@ -347,6 +347,18 @@ void schedulerLoop(SharedState &s) {
    }
 }
 
+void setGenerating(SharedState &s, bool on) {
+    std::lock_guard<std::mutex> lock(s.m);
+    s.generating = on;
+}
+
+std::string buildReport(SharedState &s) {
+    std::ostringstream out;
+    std::lock_guard<std::mutex> lock(s.m);
+    writeReport(out, s);
+    return out.str();
+}
+
 std::vector<std::string> splitTokens(const std::string &line) {
     std::istringstream iss(line);
     std::vector<std::string> tokens;
@@ -401,7 +413,36 @@ void consoleLoop() {
             continue;
         }
 
-        // commands that need the scheduler go here
+        if (cmd == "scheduler-start") {
+            setGenerating(*state, true);
+            std::cout << "Scheduler started: generating processes.\n";
+            continue;
+        }
+
+        if (cmd == "scheduler-stop") {
+            setGenerating(*state, false);
+            std::cout << "Scheduler stopped: no longer generating processes.\n";
+            continue;
+        }
+
+        if (cmd == "report-util") {
+            std::string report = buildReport(*state);
+            std::ofstream file("csopesy-log.txt"); // overwrites each time
+            if (!file) {
+                std::cout << "Could not write csopesy-log.txt\n";
+                continue;
+            }
+            file << report;
+            std::cout << "Report generated at csopesy-log.txt!\n";
+            continue;
+        }
+
+        if (cmd == "screen" && tokens.size() >= 2 && tokens[1] == "-ls") {
+            std::cout << buildReport(*state);
+            continue;
+        }
+
+        // screen -s / -r go here (next commit)
 
         std::cout << "Unknown command: " << cmd << "\n";
     }
