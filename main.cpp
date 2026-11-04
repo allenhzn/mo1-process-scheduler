@@ -232,7 +232,12 @@ void cpuTick(SharedState &s) {
 
     if (s.generating && s.config.batch_process_freq > 0
         && s.tick % s.config.batch_process_freq == 0) {
+
+        while (s.processes.count("p" + std::to_string(s.nextProcessId)))
+            s.nextProcessId++;
+        // skip ids whose p<id> name was already taken via screen -s
         std::string name = "p" + std::to_string(s.nextProcessId);
+
         auto p = makeProcess(&s.nextProcessId, name, s.config.min_ins,
                              s.config.max_ins);
         // yes next process id is incremented inside makeProcess instead
@@ -371,7 +376,17 @@ std::vector<std::string> splitTokens(const std::string &line) {
     return tokens;
 }
 
-// the per-process console: process-smi prints info, exit goes back to main
+// 1-32 chars of letters, digits, '_' or '-'
+bool isValidProcessName(const std::string &name) {
+    if (name.empty() || name.size() > 32)
+        return false;
+    for (char ch : name)
+        if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_' &&ch != '-')
+            return false;
+    return true;
+}
+
+// the per-process console. process-smi and exit
 void screenSession(SharedState &s, const std::shared_ptr<Process> &p) {
     std::cout << "Attached to process '" << p->name
         << "'. Type 'process-smi' for info, 'exit' to return.\n";
@@ -420,6 +435,15 @@ void consoleLoop() {
         if (tokens.empty())
             continue;
         const std::string &cmd = tokens[0];
+
+        static const std::vector<std::string> noArgCommands = {
+            "exit", "initialize", "scheduler-start", "scheduler-stop",
+            "report-util"};
+        if (tokens.size() > 1 &&
+            std::find(noArgCommands.begin(), noArgCommands.end(), cmd) != noArgCommands.end()) {
+            std::cout << "'" << cmd << "' takes no arguments.\n";
+            continue;
+        }
 
         if (cmd == "exit") {
             break;
@@ -470,6 +494,19 @@ void consoleLoop() {
             file << report;
             std::cout << "Report generated at csopesy-log.txt!\n";
             continue;
+        }
+
+        if (cmd == "screen") {
+            bool lsForm = tokens.size() == 2 && tokens[1] == "-ls";
+            bool nameForm = tokens.size() == 3 && (tokens[1] == "-s" || tokens[1] == "-r");
+            if (!lsForm && !nameForm) {
+                std::cout << "Usage: screen -ls | screen -s <name> | screen -r <name>\n";
+                continue;
+            }
+            if (tokens[1] == "-s" && !isValidProcessName(tokens[2])) {
+                std::cout << "Invalid process name. Use 1-32 letters, digits, '_' or '-'.\n";
+                continue;
+            }
         }
 
         if (cmd == "screen" && tokens.size() >= 2 && tokens[1] == "-ls") {
