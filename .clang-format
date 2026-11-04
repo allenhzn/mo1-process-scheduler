@@ -2,6 +2,6 @@
 BasedOnStyle: LLVM
 AlignOperands: AlignAfterOperator
 BreakBeforeBinaryOperators: NonAssignment
-ColumnLimit: 100
+ColumnLimit: 80
 ReflowComments: False
 IndentWidth: 4
