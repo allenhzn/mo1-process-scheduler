@@ -15,8 +15,10 @@ void Process::execInstruction() {
 
         bool control = i->isControl();
         i->execute();
+        if (!control) {
+            executedLOC++;
+        }
         cleanupFrames();
-
         if (!control) {
             return;
         }
@@ -42,13 +44,15 @@ void Process::cleanupFrames() {
     }
 }
 
-void Process::pushFrame(std::vector<std::unique_ptr<Instruction>> &body, std::uint16_t repeats) {
+void Process::pushFrame(std::vector<std::unique_ptr<Instruction>> &body,
+                        std::uint16_t repeats) {
     if (repeats == 0 || body.empty())
         return; // exit once no more instructions are there
     frames.push_back(Frame{&body, 0, repeats});
 }
 
 void Process::addInstruction(std::unique_ptr<Instruction> instruction) {
+    totalLOC += instruction->getLOC();
     program.push_back(std::move(instruction));
 }
 
@@ -60,7 +64,8 @@ void Process::printLogs() {
 
 void Process::printVars() {
     for (const auto &var : vars) {
-        std::cout << "Name: " << var.first << " | Value: " << var.second << std::endl;
+        std::cout << "Name: " << var.first << " | Value: " << var.second
+                  << std::endl;
     }
 }
 

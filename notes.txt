@@ -10,3 +10,6 @@ The range of instruction length per process can be set through the “config.txt
 just add that I guess
 
 separate list of sleeping processes -> upon sleep transfer current process
+
+LITERALLY WHAT DO THE TIMES MEAN FOR THE PROCESS SCREEN
+for now going with just creation time 

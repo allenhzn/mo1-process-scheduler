@@ -5,9 +5,10 @@
 struct Process;
 
 struct Core {
-    int id;    
+    int id;
     std::shared_ptr<Process> currentProcess = nullptr;
-    // don't need idle flag cause just check if currentProcess = nullptr I think
+    // don't need idle flag cause just check if currentProcess = nullptr
 
-    std::uint32_t quantumUsed = 0;
+    std::shared_ptr<Process> lastRan;
+    std::uint64_t quantumUsed = 0;
 };

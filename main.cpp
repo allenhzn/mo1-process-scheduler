@@ -18,10 +18,12 @@ dummy processes for the CPU scheduler. Each process is accessible via the
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <iomanip>
 #include <iostream>
 #include <list>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -29,11 +31,11 @@ dummy processes for the CPU scheduler. Each process is accessible via the
 struct Config {
     int num_cpu;                      // 1 - 128
     std::string scheduler;            // fcfs or rr
-    std::uint32_t quantum_cycles;     // 1 - 2^32
-    std::uint32_t batch_process_freq; // 1 - 2^32
-    std::uint32_t min_ins;            // 1 - 2^32
-    std::uint32_t max_ins;            // 1 - 2^32
-    std::uint32_t delays_per_exec;    // 0 - 2^32
+    std::uint64_t quantum_cycles;     // 1 - 2^32
+    std::uint64_t batch_process_freq; // 1 - 2^32
+    std::uint64_t min_ins;            // 1 - 2^32
+    std::uint64_t max_ins;            // 1 - 2^32
+    std::uint64_t delays_per_exec;    // 0 - 2^32
 };
 
 struct SharedState {
@@ -88,9 +90,11 @@ void cpuTick(SharedState &s) {
     // assign processes to active cores
 
     for (auto &core : s.cores) {
+        core.lastRan = nullptr;
         if (!core.currentProcess)
             continue;
 
+        core.lastRan = core.currentProcess;
         s.coresUsedLastTick++;
         auto &p = core.currentProcess;
         p->execInstruction();
@@ -103,7 +107,8 @@ void cpuTick(SharedState &s) {
         } else if (p->sleepTicks > 0) {
             s.sleeping.push_back(p);
             release = true;
-        } else if (s.config.scheduler == "rr" && core.quantumUsed >= s.config.quantum_cycles) {
+        } else if (s.config.scheduler == "rr"
+                   && core.quantumUsed >= s.config.quantum_cycles) {
             s.ready.push_back(p);
             release = true;
         }
@@ -113,8 +118,12 @@ void cpuTick(SharedState &s) {
 
     if (s.generating && s.config.batch_process_freq > 0
         && s.tick % s.config.batch_process_freq == 0) {
-        std::string name = "p" + std::to_string(s.nextProcessId++);
-        auto p = makeProcess(name, s.config.min_ins, s.config.max_ins);
+        std::string name = "p" + std::to_string(s.nextProcessId);
+        auto p = makeProcess(&s.nextProcessId, name, s.config.min_ins,
+                             s.config.max_ins);
+        // yes next process id is incremented inside makeProcess instead
+        // because you can manually insert processes with specific names using screen -s
+
         s.processes[name] = p;
         s.ready.push_back(p);
     }
@@ -123,22 +132,116 @@ void cpuTick(SharedState &s) {
     s.tick++;
 }
 
+void writeProcessInfo(std::ostream &out,
+                      const std::shared_ptr<Process> process) {
+
+    std::stringstream logs;
+
+    size_t len = 0;
+    for (const auto &s : process->logs) {
+        len += s.length();
+    }
+
+    std::string logString;
+    logString.reserve(len);
+
+    for (const auto &s : process->logs) {
+        logString.append(s + "\n");
+    }
+
+    out << "Process name: " << process->name << "\n"
+        << "ID: " << process->id << "\nLogs:\n"
+        << logString << "\n"
+        << "Current instruction line: " << process->executedLOC << "\n"
+        << "Lines of code: " << process->totalLOC << "\n";
+}
+
+void writeReport(std::ostream &out, const SharedState &s) {
+
+    std::stringstream running;
+    std::stringstream finished;
+
+    constexpr int NAME_WIDTH = 15;
+    constexpr int TIME_WIDTH = 28;
+    constexpr int STATUS_WIDTH = 15;
+    constexpr int LOC_WIDTH = 12;
+
+    for (const auto &core : s.cores) {
+        if (auto p = core.lastRan) {
+            std::stringstream timestamp;
+            timestamp << std::put_time(&p->creationTime,
+                                       "(%m/%d/%Y) %I:%M:%S %p");
+
+            std::stringstream status;
+            status << "Core: " << core.id;
+
+            std::stringstream loc;
+            loc << p->executedLOC << " / " << p->totalLOC;
+
+            running << std::left << std::setw(NAME_WIDTH) << p->name
+                    << std::left << std::setw(TIME_WIDTH) << timestamp.str()
+                    << std::left << std::setw(STATUS_WIDTH) << status.str()
+                    << std::left << std::setw(LOC_WIDTH) << loc.str() << "\n";
+        }
+    }
+
+    for (const auto &p : s.finished) {
+        std::stringstream timestamp;
+        timestamp << std::put_time(&p->creationTime, "(%m/%d/%Y) %I:%M:%S %p");
+
+        std::stringstream loc;
+        loc << p->executedLOC << " / " << p->totalLOC;
+
+        finished << std::left << std::setw(NAME_WIDTH) << p->name << std::left
+                 << std::setw(TIME_WIDTH) << timestamp.str() << std::left
+                 << std::setw(STATUS_WIDTH) << "Finished" << std::left
+                 << std::setw(LOC_WIDTH) << loc.str() << "\n";
+    }
+
+    out << "CPU utilization: "
+        << (s.coresUsedLastTick / static_cast<float>(s.cores.size())) * 100
+        << "%\n"
+        << "Cores used: " << s.coresUsedLastTick << "\n"
+        << "Cores available: " << s.cores.size() - s.coresUsedLastTick << "\n"
+        << "\n------------------------------------------------------------\n"
+        << "Running processes:\n"
+        << running.rdbuf() << "\n"
+        << "Finished processes:\n"
+        << finished.rdbuf()
+        << "\n------------------------------------------------------------\n";
+}
+
+void insertNewProcess(const std::string &name, SharedState &s) {
+    auto p =
+        makeProcess(&s.nextProcessId, name, s.config.min_ins, s.config.max_ins);
+    s.processes[name] = p;
+    s.ready.push_back(p);
+}
+
 void schedulerLoop(SharedState &s) {
     while (s.running) {
         {
             std::lock_guard<std::mutex> lock(s.m);
             cpuTick(s);
-            if (s.tick > 1000) {
+            if (s.tick > 100) {
                 s.generating = false;
             }
+            if (s.tick == 32) {
+                std::string name = "screen_01";
+                insertNewProcess(name, s);
+            }
+            if (s.tick == 62) {
+                writeReport(std::cout, s);
+                writeProcessInfo(std::cout, s.processes["screen_01"]);
+            }
         }
-        // std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        //std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
 int main() {
-    std::vector<std::string> developers = {"Hizon, Allen", "Infante, Charles", "Luna, Jacoba",
-                                           "Marquez, Miguel"};
+    std::vector<std::string> developers = {"Hizon, Allen", "Infante, Charles",
+                                           "Luna, Jacoba", "Marquez, Miguel"};
     const ::std::string DATE = "\nVersion date: 2026-11-05\n";
 
     std::cout << "Welcome to CSOPESY!" << "\n\n";
@@ -149,7 +252,7 @@ int main() {
 
     std::cout << DATE;
 
-    auto config = Config{8, "rr", 20, 1, 1, 100, 0};
+    auto config = Config{4, "rr", 10, 10, 10, 30, 0};
     // TODO (2026-11-03) set based on config.txt
 
     auto state = SharedState{config};
@@ -160,9 +263,6 @@ int main() {
 
     schedulerLoop(state);
 
-    for (const auto &p : state.processes) {
-        p.second->printLogs();
-    }
 }
 
 /* CPU scheduling design
