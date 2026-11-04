@@ -518,10 +518,12 @@ void consoleLoop() {
             const std::string &name = tokens[2];
             std::shared_ptr<Process> p;
             bool created = false;
+            bool alreadyFinished = false;
             {
                 std::lock_guard<std::mutex> lock(state->m);
                 auto it = state->processes.find(name);
                 if (it != state->processes.end()) {
+                    if (it->second->finished()) alreadyFinished = true;
                     p = it->second;
                 }
                 else {
@@ -529,8 +531,12 @@ void consoleLoop() {
                     created = true;
                 }
             }
+            if (alreadyFinished) {
+                std::cout << "Process " << name << " has already finished.\n";
+                continue;
+            }
             if (created)
-            std::cout << "Created new process '" << name << "'.\n";
+                std::cout << "Created new process " << name << ".\n";
             screenSession(*state, p);
             continue;
         }
@@ -541,11 +547,11 @@ void consoleLoop() {
             {
                 std::lock_guard<std::mutex> lock(state->m);
                 auto it = state->processes.find(name);
-                if (it != state->processes.end())
-                p = it->second;
+                if (it != state->processes.end() && !it->second->finished())
+                    p = it->second;
             }
             if (!p) {
-                std::cout << "Process '" << name << "' not found.\n";
+                std::cout << "Process " << name << " not found.\n";
                 continue;
             }
             screenSession(*state, p);
