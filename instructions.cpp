@@ -8,6 +8,8 @@
 #include <sstream>
 #include <variant>
 #include <vector>
+#include <algorithm>
+#include <limits>
 
 std::uint64_t PrintInstruction::getLOC() { return 1; }
 std::uint64_t DeclareInstruction::getLOC() { return 1; }
@@ -69,7 +71,9 @@ void AddInstruction::execute() {
             b = std::get<uint16_t>(val3);
         }
 
-        p->vars[var1] = a + b;
+        p->vars[var1] = static_cast<std::uint16_t>(std::min<int>(
+            static_cast<int>(a) + static_cast<int>(b),
+            std::numeric_limits<std::uint16_t>::max()));
         // var1 value = val2 + val3
     } else {
         // process has been removed
@@ -100,7 +104,8 @@ void SubInstruction::execute() {
             b = std::get<uint16_t>(val3);
         }
 
-        p->vars[var1] = a - b;
+        p->vars[var1] = static_cast<std::uint16_t>(
+            std::max(0, static_cast<int>(a) - static_cast<int>(b)));
         // var1 value = val2 - val3
     } else {
         // process has been removed
