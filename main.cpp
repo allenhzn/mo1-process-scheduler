@@ -27,6 +27,7 @@ dummy processes for the CPU scheduler. Each process is accessible via the
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <fstream>
 
 struct Config {
     int num_cpu;                      // 1 - 128
@@ -41,6 +42,111 @@ struct Config {
     // strict means round robin can preempt during instruction delay, false means it only preempts after 
     // actually executing an instruction 
 };
+
+namespace {
+
+    constexpr std::uint64_t MAX_U32_PLUS = 4294967296ULL; // 2^32
+
+    // digits only so that -1 doesnt wrap. overflow saturates to UINT64_MAX
+    bool parseUInt(const std::string &text, std::uint64_t &out) {
+        if (text.empty())
+            return false;
+        for (char ch : text)
+            if (!std::isdigit(static_cast<unsigned char>(ch)))
+                return false;
+        try {
+            out = std::stoull(text);
+        } catch (const std::out_of_range &) {
+            out = UINT64_MAX;
+        }
+        return true;
+    }
+
+    std::uint64_t clampWarn(const std::string &key, std::uint64_t value,
+                            std::uint64_t lo, std::uint64_t hi) {
+        std::uint64_t clamped = std::min(std::max(value, lo), hi);
+        if (clamped != value)
+            std::cout << "Warning: " << key << " out of range [" << lo << ", "
+                      << hi << "], using " << clamped << "\n";
+        return clamped;
+    }
+
+}
+
+// reads config.txt, ONLY lines in the form of "<key> <value>". returns nullopt if config is unusable
+std::optional<Config> loadConfig(const std::string &path) {
+    std::ifstream file(path);
+    if (!file) {
+        std::cout << "Could not open " << path << "\n";
+        return std::nullopt;
+    }
+
+    Config cfg{};
+    std::unordered_map<std::string, std::string> raw;
+    const std::vector<std::string> keys = {
+        "num-cpu",   "scheduler", "quantum-cycles", "batch-process-freq",
+        "min-ins",   "max-ins",   "delays-per-exec"};
+
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        std::string key, value, extra;
+        if (!(iss >> key >> value)) // blank line 
+            continue;
+        if (std::find(keys.begin(), keys.end(), key) == keys.end()) // documentation text
+            continue;
+        if (iss >> extra)
+            continue; 
+        raw[key] = value;
+    }
+
+    for (const auto &k : keys) {
+        if (!raw.count(k)) {
+            std::cout << "config.txt is missing '" << k << "'\n";
+            return std::nullopt;
+        }
+    }
+
+    std::string sched = raw["scheduler"];
+    if (sched.size() >= 2 && sched.front() == '"' && sched.back() == '"')
+        sched = sched.substr(1, sched.size() - 2);
+    for (char &ch : sched)
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (sched != "fcfs" && sched != "rr") {
+        std::cout << "config.txt: scheduler must be \"fcfs\" or \"rr\"\n";
+        return std::nullopt;
+    }
+    cfg.scheduler = sched;
+
+    auto number = [&](const std::string &key, std::uint64_t lo,
+                      std::uint64_t hi, std::uint64_t &out) {
+        std::uint64_t v;
+        if (!parseUInt(raw[key], v)) {
+            std::cout << "config.txt: '" << key
+                      << "' must be a non-negative integer\n";
+            return false;
+        }
+        out = clampWarn(key, v, lo, hi);
+        return true;
+    };
+
+    std::uint64_t cpus = 0;
+    if (!number("num-cpu", 1, 128, cpus) ||
+        !number("quantum-cycles", 1, MAX_U32_PLUS, cfg.quantum_cycles) ||
+        !number("batch-process-freq", 1, MAX_U32_PLUS,
+                cfg.batch_process_freq) ||
+        !number("min-ins", 1, MAX_U32_PLUS, cfg.min_ins) ||
+        !number("max-ins", 1, MAX_U32_PLUS, cfg.max_ins) ||
+        !number("delays-per-exec", 0, MAX_U32_PLUS, cfg.delays_per_exec))
+        return std::nullopt;
+    cfg.num_cpu = static_cast<int>(cpus);
+
+    if (cfg.min_ins > cfg.max_ins) {
+        std::cout << "Warning: min-ins > max-ins, swapping them\n";
+        std::swap(cfg.min_ins, cfg.max_ins);
+    }
+    return cfg;
+}
 
 struct SharedState {
     std::mutex m;
@@ -271,8 +377,10 @@ int main() {
 
     std::cout << DATE;
 
-    auto config = Config{4, "rr", 10, 10, 10, 30, 2};
-    // TODO (2026-11-03) set based on config.txt
+    auto loaded = loadConfig("config.txt");
+    if (!loaded)
+        return 1;
+    auto config = *loaded;
 
     auto state = SharedState{config};
     state.cores.resize(config.num_cpu);

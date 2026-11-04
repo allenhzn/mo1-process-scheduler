@@ -2,7 +2,9 @@ num-cpu 4
 scheduler "rr"
 quantum-cycles 5
 batch-process-freq 1
-
+min-ins 100
+max-ins 200
+delays-per-exec 0
 
 num-cpu 
 Number of CPUs available. The range is [1, 128].
