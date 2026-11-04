@@ -347,6 +347,72 @@ void schedulerLoop(SharedState &s) {
    }
 }
 
+std::vector<std::string> splitTokens(const std::string &line) {
+    std::istringstream iss(line);
+    std::vector<std::string> tokens;
+    std::string t;
+    while (iss >> t)
+        tokens.push_back(t);
+    return tokens;
+}
+
+// runs on its own thread. reads commands until "exit" or EOF
+void consoleLoop() {
+    std::unique_ptr<SharedState> state;
+    std::thread scheduler;
+
+    std::string line;
+    while (true) {
+        std::cout << "root:\\> " << std::flush;
+        if (!std::getline(std::cin, line)) {
+            std::cout << "\n"; // ctrl-d: treat as exit
+            break;
+        }
+
+        auto tokens = splitTokens(line);
+        if (tokens.empty())
+            continue;
+        const std::string &cmd = tokens[0];
+
+        if (cmd == "exit") {
+            break;
+        }
+
+        if (cmd == "initialize") {
+            if (state) {
+                std::cout << "Already initialized.\n";
+                continue;
+            }
+            auto cfg = loadConfig("config.txt");
+            if (!cfg)
+                continue;
+            state = std::make_unique<SharedState>(*cfg);
+            state->cores.resize(static_cast<std::size_t>(cfg->num_cpu));
+            for (std::size_t i = 0; i < state->cores.size(); i++)
+                state->cores[i].id = static_cast<int>(i);
+            scheduler = std::thread(schedulerLoop, std::ref(*state));
+            std::cout << "Initialized with " << cfg->num_cpu << " CPUs ("
+                      << cfg->scheduler << ").\n";
+            continue;
+        }
+
+        if (!state) {
+            std::cout << "Please run 'initialize' first.\n";
+            continue;
+        }
+
+        // commands that need the scheduler go here
+
+        std::cout << "Unknown command: " << cmd << "\n";
+    }
+
+    if (state) {
+        state->running = false;
+        if (scheduler.joinable())
+            scheduler.join();
+    }
+}
+
 int main() {
     std::vector<std::string> developers = {"Hizon, Allen", "Infante, Charles",
                                            "Luna, Jacoba", "Marquez, Miguel"};
@@ -358,20 +424,11 @@ int main() {
         std::cout << dev << '\n';
     }
 
-    std::cout << DATE;
+    std::cout << DATE << "\n";
 
-    auto loaded = loadConfig("config.txt");
-    if (!loaded)
-        return 1;
-    auto config = *loaded;
-
-    auto state = SharedState{config};
-    state.cores.resize(config.num_cpu);
-    for (std::size_t i = 0; i < state.cores.size(); i++) {
-        state.cores[i].id = static_cast<int>(i);
-    }
-
-    schedulerLoop(state);
+    std::thread io(consoleLoop);
+    io.join();
+    return 0;
 }
 
 /* CPU scheduling design
