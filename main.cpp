@@ -164,12 +164,21 @@ struct SharedState {
     std::atomic<bool> generating{false};
 
     explicit SharedState(Config cfg) : config(std::move(cfg)) {}
-    std::size_t coresUsedLastTick = 0;
 };
 
-void cpuTick(SharedState &s) {
-    s.coresUsedLastTick = 0;
+void assignIdleCores(SharedState &s) {
+    for (auto &core : s.cores) {
+        if (!core.currentProcess && !s.ready.empty()) {
+            core.currentProcess = std::move(s.ready.front());
+            s.ready.pop_front();
+            core.currentProcess->executingCore = core.id;
+            core.quantumUsed = 0;
+            core.executionDelay = 0;
+        }
+    }
+}
 
+void cpuTick(SharedState &s) {
     for (auto it = s.sleeping.begin(); it != s.sleeping.end();) {
         if (--(*it)->sleepTicks == 0) {
             s.ready.push_back(*it);
@@ -180,19 +189,10 @@ void cpuTick(SharedState &s) {
     }
     // wake sleeping processes
 
-    for (auto &core : s.cores) {
-        if (!core.currentProcess && !s.ready.empty()) {
-            core.currentProcess = std::move(s.ready.front());
-            s.ready.pop_front();
-            core.currentProcess->executingCore = core.id;
-            core.quantumUsed = 0;
-            core.executionDelay = 0;
-        }
-    }
+    assignIdleCores(s);
     // assign processes to active cores
 
     for (auto &core : s.cores) {
-        core.lastRan = nullptr;
         if (!core.currentProcess)
             continue;
 
@@ -205,8 +205,6 @@ void cpuTick(SharedState &s) {
             // TODO (2026-11-04) does the instruction delay burn a quantum? probably but check later
         } else {
             didExecute = true;
-            core.lastRan = p;
-            s.coresUsedLastTick++;
             p->execInstruction();
             core.executionDelay = s.config.delays_per_exec;
             core.quantumUsed++;
@@ -248,6 +246,7 @@ void cpuTick(SharedState &s) {
     }
     // process gen comes at the end of the CPU cycle
 
+    assignIdleCores(s);
     s.tick++;
 }
 
@@ -288,8 +287,10 @@ void writeReport(std::ostream &out, const SharedState &s) {
     constexpr int STATUS_WIDTH = 15;
     constexpr int LOC_WIDTH = 12;
 
+    std::size_t busy = 0;
     for (const auto &core : s.cores) {
-        if (auto p = core.lastRan) {
+        if (auto p = core.currentProcess) {
+            busy++;
             std::stringstream timestamp;
             timestamp << std::put_time(&p->creationTime,
                                        "(%m/%d/%Y) %I:%M:%S %p");
@@ -321,10 +322,9 @@ void writeReport(std::ostream &out, const SharedState &s) {
     }
 
     out << "CPU utilization: "
-        << (s.coresUsedLastTick / static_cast<float>(s.cores.size())) * 100
-        << "%\n"
-        << "Cores used: " << s.coresUsedLastTick << "\n"
-        << "Cores available: " << s.cores.size() - s.coresUsedLastTick << "\n"
+        << (busy / static_cast<float>(s.cores.size())) * 100 << "%\n"
+        << "Cores used: " << busy << "\n"
+        << "Cores available: " << s.cores.size() - busy << "\n"
         << "\n------------------------------------------------------------"
            "\n"
         << "Running processes:\n"
