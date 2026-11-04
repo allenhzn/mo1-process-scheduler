@@ -1,11 +1,11 @@
 /*
-“initialize” – initialize the processor configuration of the application. This
-must be called before any other command could be recognized, aside from “exit”.
-“exit” – terminates the console. “screen” – see additional details.
-“scheduler-start” (formerly scheduler-test) – continuously generates a batch of
+â€œinitializeâ€ â€“ initialize the processor configuration of the application. This
+must be called before any other command could be recognized, aside from â€œexitâ€.
+â€œexitâ€ â€“ terminates the console. â€œscreenâ€ â€“ see additional details.
+â€œscheduler-startâ€ (formerly scheduler-test) â€“ continuously generates a batch of
 dummy processes for the CPU scheduler. Each process is accessible via the
-“screen” command. “scheduler-stop” – stops generating dummy processes.
-“report-util” – for generating CPU utilization report. See additional details.
+â€œscreenâ€ command. â€œscheduler-stopâ€ â€“ stops generating dummy processes.
+â€œreport-utilâ€ â€“ for generating CPU utilization report. See additional details.
 */
 
 #include "core.h"
@@ -36,6 +36,10 @@ struct Config {
     std::uint64_t min_ins;            // 1 - 2^32
     std::uint64_t max_ins;            // 1 - 2^32
     std::uint64_t delays_per_exec;    // 0 - 2^32
+    bool strict_quantum = false;      
+    // ok added this because of the quantum behavior with round robin and the instruction delay
+    // strict means round robin can preempt during instruction delay, false means it only preempts after 
+    // actually executing an instruction 
 };
 
 struct SharedState {
@@ -85,6 +89,7 @@ void cpuTick(SharedState &s) {
             s.ready.pop_front();
             core.currentProcess->executingCore = core.id;
             core.quantumUsed = 0;
+            core.executionDelay = 0;
         }
     }
     // assign processes to active cores
@@ -94,24 +99,36 @@ void cpuTick(SharedState &s) {
         if (!core.currentProcess)
             continue;
 
-        core.lastRan = core.currentProcess;
-        s.coresUsedLastTick++;
-        auto &p = core.currentProcess;
-        p->execInstruction();
-        core.quantumUsed++;
-
         bool release = false;
-        if (p->finished()) {
-            s.finished.push_back(p);
-            release = true;
-        } else if (p->sleepTicks > 0) {
-            s.sleeping.push_back(p);
-            release = true;
-        } else if (s.config.scheduler == "rr"
-                   && core.quantumUsed >= s.config.quantum_cycles) {
+        bool didExecute = false;
+        auto &p = core.currentProcess;
+        if (core.executionDelay > 0) {
+            core.executionDelay--;
+            core.quantumUsed++;
+            // TODO (2026-11-04) does the instruction delay burn a quantum? probably but check later
+        } else {
+            didExecute = true;
+            core.lastRan = p;
+            s.coresUsedLastTick++;
+            p->execInstruction();
+            core.executionDelay = s.config.delays_per_exec;
+            core.quantumUsed++;
+            if (p->finished()) {
+                s.finished.push_back(p);
+                release = true;
+            } else if (p->sleepTicks > 0) {
+                s.sleeping.push_back(p);
+                release = true;
+            }
+        }
+
+        if (!release && s.config.scheduler == "rr"
+            && core.quantumUsed >= s.config.quantum_cycles
+            && (s.config.strict_quantum || didExecute)) {
             s.ready.push_back(p);
             release = true;
         }
+
         if (release)
             core.currentProcess.reset();
     }
@@ -203,12 +220,14 @@ void writeReport(std::ostream &out, const SharedState &s) {
         << "%\n"
         << "Cores used: " << s.coresUsedLastTick << "\n"
         << "Cores available: " << s.cores.size() - s.coresUsedLastTick << "\n"
-        << "\n------------------------------------------------------------\n"
+        << "\n------------------------------------------------------------"
+           "\n"
         << "Running processes:\n"
         << running.rdbuf() << "\n"
         << "Finished processes:\n"
         << finished.rdbuf()
-        << "\n------------------------------------------------------------\n";
+        << "\n------------------------------------------------------------"
+           "\n";
 }
 
 void insertNewProcess(const std::string &name, SharedState &s) {
@@ -252,7 +271,7 @@ int main() {
 
     std::cout << DATE;
 
-    auto config = Config{4, "rr", 10, 10, 10, 30, 0};
+    auto config = Config{4, "rr", 10, 10, 10, 30, 2};
     // TODO (2026-11-03) set based on config.txt
 
     auto state = SharedState{config};
@@ -262,7 +281,6 @@ int main() {
     }
 
     schedulerLoop(state);
-
 }
 
 /* CPU scheduling design

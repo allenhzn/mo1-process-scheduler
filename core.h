@@ -11,4 +11,5 @@ struct Core {
 
     std::shared_ptr<Process> lastRan;
     std::uint64_t quantumUsed = 0;
+    std::uint64_t executionDelay = 0;
 };
