@@ -2,3 +2,5 @@
 *.o
 *.d
 *.exe
+/main
+csopesy-log.txt
