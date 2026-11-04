@@ -268,6 +268,9 @@ void writeProcessInfo(std::ostream &out,
         << logString << "\n"
         << "Current instruction line: " << process->executedLOC << "\n"
         << "Lines of code: " << process->totalLOC << "\n";
+
+        if (process->finished())
+            out << "\nFinished!\n";
 }
 
 void writeReport(std::ostream &out, const SharedState &s) {
@@ -327,11 +330,11 @@ void writeReport(std::ostream &out, const SharedState &s) {
            "\n";
 }
 
-void insertNewProcess(const std::string &name, SharedState &s) {
-    auto p =
-        makeProcess(&s.nextProcessId, name, s.config.min_ins, s.config.max_ins);
+std::shared_ptr<Process> insertNewProcess(const std::string &name,SharedState &s) {
+    auto p = makeProcess(&s.nextProcessId, name, s.config.min_ins, s.config.max_ins);
     s.processes[name] = p;
     s.ready.push_back(p);
+    return p;
 }
 
 constexpr auto TICK_DURATION = std::chrono::milliseconds(1);
@@ -366,6 +369,38 @@ std::vector<std::string> splitTokens(const std::string &line) {
     while (iss >> t)
         tokens.push_back(t);
     return tokens;
+}
+
+// the per-process console: process-smi prints info, exit goes back to main
+void screenSession(SharedState &s, const std::shared_ptr<Process> &p) {
+    std::cout << "Attached to process '" << p->name
+        << "'. Type 'process-smi' for info, 'exit' to return.\n";
+
+    std::string line;
+    while (true) {
+        std::cout << "root:\\" << p->name << "> " << std::flush;
+        if (!std::getline(std::cin, line))
+            return; // EOF
+
+        auto tokens = splitTokens(line);
+        if (tokens.empty())
+            continue;
+
+        if (tokens[0] == "exit") {
+            return;
+        }
+        else if (tokens[0] == "process-smi") {
+            std::ostringstream out;
+            {
+                std::lock_guard<std::mutex> lock(s.m);
+                writeProcessInfo(out, p);
+            }
+            std::cout << out.str();
+        }
+        else {
+            std::cout << "Unknown command: " << tokens[0] << "\n";
+        }
+    }
 }
 
 // runs on its own thread. reads commands until "exit" or EOF
@@ -442,7 +477,43 @@ void consoleLoop() {
             continue;
         }
 
-        // screen -s / -r go here (next commit)
+        if (cmd == "screen" && tokens.size() >= 3 && tokens[1] == "-s") {
+            const std::string &name = tokens[2];
+            std::shared_ptr<Process> p;
+            bool created = false;
+            {
+                std::lock_guard<std::mutex> lock(state->m);
+                auto it = state->processes.find(name);
+                if (it != state->processes.end()) {
+                    p = it->second;
+                }
+                else {
+                    p = insertNewProcess(name, *state);
+                    created = true;
+                }
+            }
+            if (created)
+            std::cout << "Created new process '" << name << "'.\n";
+            screenSession(*state, p);
+            continue;
+        }
+
+        if (cmd == "screen" && tokens.size() >= 3 && tokens[1] == "-r") {
+            const std::string &name = tokens[2];
+            std::shared_ptr<Process> p;
+            {
+                std::lock_guard<std::mutex> lock(state->m);
+                auto it = state->processes.find(name);
+                if (it != state->processes.end())
+                p = it->second;
+            }
+            if (!p) {
+                std::cout << "Process '" << name << "' not found.\n";
+                continue;
+            }
+            screenSession(*state, p);
+            continue;
+        }
 
         std::cout << "Unknown command: " << cmd << "\n";
     }
