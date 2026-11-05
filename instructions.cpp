@@ -1,15 +1,18 @@
 #include "instructions.h"
 #include "process.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <sstream>
+#include <string>
 #include <variant>
 #include <vector>
-#include <algorithm>
-#include <limits>
+
 
 std::uint64_t PrintInstruction::getLOC() { return 1; }
 std::uint64_t DeclareInstruction::getLOC() { return 1; }
@@ -18,8 +21,9 @@ std::uint64_t SubInstruction::getLOC() { return 1; }
 std::uint64_t SleepInstruction::getLOC() { return 1; }
 
 PrintInstruction::PrintInstruction(std::weak_ptr<Process> process,
-                                   std::string msg)
-    : Instruction(std::move(process)), msg(std::move(msg)) {}
+                                   std::string msg,
+                                   std::optional<std::string> varName)
+    : Instruction(std::move(process)), msg(std::move(msg)), varName(std::move(varName)) {}
 
 void PrintInstruction::execute() {
     if (auto p = process.lock()) {
@@ -27,8 +31,20 @@ void PrintInstruction::execute() {
         std::time_t now_time_t = std::chrono::system_clock::to_time_t(now);
         std::tm local_tm = *std::localtime(&now_time_t);
         std::ostringstream oss;
+        std::string value;
+
+        if (varName) {
+            auto [it, inserted] = p->vars.try_emplace(*varName, 0);
+            // variables are automatically inserted with a value of 0 if they have not been declared beforehand
+            value = std::to_string(it->second);
+            // lol it gets printed as a char if we don't do this 
+        } else {
+            value = "";
+        }
+
         oss << std::put_time(&local_tm, "(%m/%d/%Y %I:%M:%S %p) ")
-            << " Core:" << p->executingCore << "  " << '"' << msg << '"';
+            << " Core:" << p->executingCore << "  " << '"' << msg << value
+            << '"';
         p->logs.emplace_back(oss.str());
     } else {
         // process has been removed
@@ -71,9 +87,9 @@ void AddInstruction::execute() {
             b = std::get<uint16_t>(val3);
         }
 
-        p->vars[var1] = static_cast<std::uint16_t>(std::min<int>(
-            static_cast<int>(a) + static_cast<int>(b),
-            std::numeric_limits<std::uint16_t>::max()));
+        p->vars[var1] = static_cast<std::uint16_t>(
+            std::min<int>(static_cast<int>(a) + static_cast<int>(b),
+                          std::numeric_limits<std::uint16_t>::max()));
         // var1 value = val2 + val3
     } else {
         // process has been removed

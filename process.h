@@ -40,8 +40,4 @@ struct Process {
     void execInstruction();
 
     bool finished() const { return frames.empty(); }
-
-    // TODO (2026-11-03) debug stuff below, remove from final
-    void printVars();
-    void printLogs();
 };

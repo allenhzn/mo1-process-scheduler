@@ -1,13 +1,3 @@
-/*
-â€œinitializeâ€ â€“ initialize the processor configuration of the application. This
-must be called before any other command could be recognized, aside from â€œexitâ€.
-â€œexitâ€ â€“ terminates the console. â€œscreenâ€ â€“ see additional details.
-â€œscheduler-startâ€ (formerly scheduler-test) â€“ continuously generates a batch of
-dummy processes for the CPU scheduler. Each process is accessible via the
-â€œscreenâ€ command. â€œscheduler-stopâ€ â€“ stops generating dummy processes.
-â€œreport-utilâ€ â€“ for generating CPU utilization report. See additional details.
-*/
-
 #include "core.h"
 #include "factory.h"
 #include "instructions.h"
@@ -18,6 +8,7 @@ dummy processes for the CPU scheduler. Each process is accessible via the
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <list>
@@ -27,7 +18,6 @@ dummy processes for the CPU scheduler. Each process is accessible via the
 #include <thread>
 #include <unordered_map>
 #include <vector>
-#include <fstream>
 
 struct Config {
     int num_cpu;                      // 1 - 128
@@ -37,41 +27,41 @@ struct Config {
     std::uint64_t min_ins;            // 1 - 2^32
     std::uint64_t max_ins;            // 1 - 2^32
     std::uint64_t delays_per_exec;    // 0 - 2^32
-    bool strict_quantum = false;      
+    bool strict_quantum = false;
     // ok added this because of the quantum behavior with round robin and the instruction delay
-    // strict means round robin can preempt during instruction delay, false means it only preempts after 
-    // actually executing an instruction 
+    // strict means round robin can preempt during instruction delay, false means it only preempts after
+    // actually executing an instruction
 };
 
 namespace {
 
-    constexpr std::uint64_t MAX_U32_PLUS = 4294967296ULL; // 2^32
+constexpr std::uint64_t MAX_U32_PLUS = 4294967296ULL; // 2^32
 
-    // digits only so that -1 doesnt wrap. overflow saturates to UINT64_MAX
-    bool parseUInt(const std::string &text, std::uint64_t &out) {
-        if (text.empty())
+// digits only so that -1 doesnt wrap. overflow saturates to UINT64_MAX
+bool parseUInt(const std::string &text, std::uint64_t &out) {
+    if (text.empty())
+        return false;
+    for (char ch : text)
+        if (!std::isdigit(static_cast<unsigned char>(ch)))
             return false;
-        for (char ch : text)
-            if (!std::isdigit(static_cast<unsigned char>(ch)))
-                return false;
-        try {
-            out = std::stoull(text);
-        } catch (const std::out_of_range &) {
-            out = UINT64_MAX;
-        }
-        return true;
+    try {
+        out = std::stoull(text);
+    } catch (const std::out_of_range &) {
+        out = UINT64_MAX;
     }
-
-    std::uint64_t clampWarn(const std::string &key, std::uint64_t value,
-                            std::uint64_t lo, std::uint64_t hi) {
-        std::uint64_t clamped = std::min(std::max(value, lo), hi);
-        if (clamped != value)
-            std::cout << "Warning: " << key << " out of range [" << lo << ", "
-                      << hi << "], using " << clamped << "\n";
-        return clamped;
-    }
-
+    return true;
 }
+
+std::uint64_t clampWarn(const std::string &key, std::uint64_t value,
+                        std::uint64_t lo, std::uint64_t hi) {
+    std::uint64_t clamped = std::min(std::max(value, lo), hi);
+    if (clamped != value)
+        std::cout << "Warning: " << key << " out of range [" << lo << ", " << hi
+                  << "], using " << clamped << "\n";
+    return clamped;
+}
+
+} // namespace
 
 // reads config.txt, ONLY lines in the form of "<key> <value>". returns nullopt if config is unusable
 std::optional<Config> loadConfig(const std::string &path) {
@@ -84,19 +74,20 @@ std::optional<Config> loadConfig(const std::string &path) {
     Config cfg{};
     std::unordered_map<std::string, std::string> raw;
     const std::vector<std::string> keys = {
-        "num-cpu",   "scheduler", "quantum-cycles", "batch-process-freq",
-        "min-ins",   "max-ins",   "delays-per-exec"};
+        "num-cpu", "scheduler", "quantum-cycles", "batch-process-freq",
+        "min-ins", "max-ins",   "delays-per-exec"};
 
     std::string line;
     while (std::getline(file, line)) {
         std::istringstream iss(line);
         std::string key, value, extra;
-        if (!(iss >> key >> value)) // blank line 
+        if (!(iss >> key >> value)) // blank line
             continue;
-        if (std::find(keys.begin(), keys.end(), key) == keys.end()) // documentation text
+        if (std::find(keys.begin(), keys.end(), key)
+            == keys.end()) // documentation text
             continue;
         if (iss >> extra)
-            continue; 
+            continue;
         raw[key] = value;
     }
 
@@ -131,13 +122,13 @@ std::optional<Config> loadConfig(const std::string &path) {
     };
 
     std::uint64_t cpus = 0;
-    if (!number("num-cpu", 1, 128, cpus) ||
-        !number("quantum-cycles", 1, MAX_U32_PLUS, cfg.quantum_cycles) ||
-        !number("batch-process-freq", 1, MAX_U32_PLUS,
-                cfg.batch_process_freq) ||
-        !number("min-ins", 1, MAX_U32_PLUS, cfg.min_ins) ||
-        !number("max-ins", 1, MAX_U32_PLUS, cfg.max_ins) ||
-        !number("delays-per-exec", 0, MAX_U32_PLUS, cfg.delays_per_exec))
+    if (!number("num-cpu", 1, 128, cpus)
+        || !number("quantum-cycles", 1, MAX_U32_PLUS, cfg.quantum_cycles)
+        || !number("batch-process-freq", 1, MAX_U32_PLUS,
+                   cfg.batch_process_freq)
+        || !number("min-ins", 1, MAX_U32_PLUS, cfg.min_ins)
+        || !number("max-ins", 1, MAX_U32_PLUS, cfg.max_ins)
+        || !number("delays-per-exec", 0, MAX_U32_PLUS, cfg.delays_per_exec))
         return std::nullopt;
     cfg.num_cpu = static_cast<int>(cpus);
 
@@ -202,7 +193,7 @@ void cpuTick(SharedState &s) {
         if (core.executionDelay > 0) {
             core.executionDelay--;
             core.quantumUsed++;
-            // TODO (2026-11-04) does the instruction delay burn a quantum? probably but check later
+            // final verdict uhhh yeah the delay burns a quantum why not lol
         } else {
             didExecute = true;
             p->execInstruction();
@@ -273,8 +264,8 @@ void writeProcessInfo(std::ostream &out,
         << "Current instruction line: " << process->executedLOC << "\n"
         << "Lines of code: " << process->totalLOC << "\n";
 
-        if (process->finished())
-            out << "\nFinished!\n";
+    if (process->finished())
+        out << "\nFinished!\n";
 }
 
 void writeReport(std::ostream &out, const SharedState &s) {
@@ -335,8 +326,10 @@ void writeReport(std::ostream &out, const SharedState &s) {
            "\n";
 }
 
-std::shared_ptr<Process> insertNewProcess(const std::string &name,SharedState &s) {
-    auto p = makeProcess(&s.nextProcessId, name, s.config.min_ins, s.config.max_ins);
+std::shared_ptr<Process> insertNewProcess(const std::string &name,
+                                          SharedState &s) {
+    auto p =
+        makeProcess(&s.nextProcessId, name, s.config.min_ins, s.config.max_ins);
     s.processes[name] = p;
     s.ready.push_back(p);
     return p;
@@ -345,14 +338,14 @@ std::shared_ptr<Process> insertNewProcess(const std::string &name,SharedState &s
 constexpr auto TICK_DURATION = std::chrono::milliseconds(1);
 
 void schedulerLoop(SharedState &s) {
-   while (s.running) {
-       {
-           std::lock_guard<std::mutex> lock(s.m);
-           cpuTick(s);
-       }
-       // sleep OUTSIDE the lock so the console thread can grab the mutex
-       std::this_thread::sleep_for(TICK_DURATION);
-   }
+    while (s.running) {
+        {
+            std::lock_guard<std::mutex> lock(s.m);
+            cpuTick(s);
+        }
+        // sleep OUTSIDE the lock so the console thread can grab the mutex
+        std::this_thread::sleep_for(TICK_DURATION);
+    }
 }
 
 void setGenerating(SharedState &s, bool on) {
@@ -381,7 +374,8 @@ bool isValidProcessName(const std::string &name) {
     if (name.empty() || name.size() > 32)
         return false;
     for (char ch : name)
-        if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_' &&ch != '-')
+        if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_'
+            && ch != '-')
             return false;
     return true;
 }
@@ -389,7 +383,7 @@ bool isValidProcessName(const std::string &name) {
 // the per-process console. process-smi and exit
 void screenSession(SharedState &s, const std::shared_ptr<Process> &p) {
     std::cout << "Attached to process '" << p->name
-        << "'. Type 'process-smi' for info, 'exit' to return.\n";
+              << "'. Type 'process-smi' for info, 'exit' to return.\n";
 
     std::string line;
     while (true) {
@@ -403,16 +397,14 @@ void screenSession(SharedState &s, const std::shared_ptr<Process> &p) {
 
         if (tokens[0] == "exit") {
             return;
-        }
-        else if (tokens[0] == "process-smi") {
+        } else if (tokens[0] == "process-smi") {
             std::ostringstream out;
             {
                 std::lock_guard<std::mutex> lock(s.m);
                 writeProcessInfo(out, p);
             }
             std::cout << out.str();
-        }
-        else {
+        } else {
             std::cout << "Unknown command: " << tokens[0] << "\n";
         }
     }
@@ -439,8 +431,9 @@ void consoleLoop() {
         static const std::vector<std::string> noArgCommands = {
             "exit", "initialize", "scheduler-start", "scheduler-stop",
             "report-util"};
-        if (tokens.size() > 1 &&
-            std::find(noArgCommands.begin(), noArgCommands.end(), cmd) != noArgCommands.end()) {
+        if (tokens.size() > 1
+            && std::find(noArgCommands.begin(), noArgCommands.end(), cmd)
+                   != noArgCommands.end()) {
             std::cout << "'" << cmd << "' takes no arguments.\n";
             continue;
         }
@@ -498,13 +491,16 @@ void consoleLoop() {
 
         if (cmd == "screen") {
             bool lsForm = tokens.size() == 2 && tokens[1] == "-ls";
-            bool nameForm = tokens.size() == 3 && (tokens[1] == "-s" || tokens[1] == "-r");
+            bool nameForm =
+                tokens.size() == 3 && (tokens[1] == "-s" || tokens[1] == "-r");
             if (!lsForm && !nameForm) {
-                std::cout << "Usage: screen -ls | screen -s <name> | screen -r <name>\n";
+                std::cout << "Usage: screen -ls | screen -s <name> | screen -r "
+                             "<name>\n";
                 continue;
             }
             if (tokens[1] == "-s" && !isValidProcessName(tokens[2])) {
-                std::cout << "Invalid process name. Use 1-32 letters, digits, '_' or '-'.\n";
+                std::cout << "Invalid process name. Use 1-32 letters, digits, "
+                             "'_' or '-'.\n";
                 continue;
             }
         }
@@ -523,10 +519,10 @@ void consoleLoop() {
                 std::lock_guard<std::mutex> lock(state->m);
                 auto it = state->processes.find(name);
                 if (it != state->processes.end()) {
-                    if (it->second->finished()) alreadyFinished = true;
+                    if (it->second->finished())
+                        alreadyFinished = true;
                     p = it->second;
-                }
-                else {
+                } else {
                     p = insertNewProcess(name, *state);
                     created = true;
                 }

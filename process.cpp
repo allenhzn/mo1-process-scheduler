@@ -55,19 +55,3 @@ void Process::addInstruction(std::unique_ptr<Instruction> instruction) {
     totalLOC += instruction->getLOC();
     program.push_back(std::move(instruction));
 }
-
-void Process::printLogs() {
-    for (auto log : logs) {
-        std::cout << log << std::endl;
-    }
-}
-
-void Process::printVars() {
-    for (const auto &var : vars) {
-        std::cout << "Name: " << var.first << " | Value: " << var.second
-                  << std::endl;
-    }
-}
-
-// TODO (2026-11-02) consider separating Process struct into execution environment for Instructions
-// and the actual administrative process info like PID used by the CPU scheduler

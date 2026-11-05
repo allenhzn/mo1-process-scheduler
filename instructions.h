@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -34,7 +35,9 @@ struct Instruction {
 
 struct PrintInstruction : Instruction {
     std::string msg;
-    PrintInstruction(std::weak_ptr<Process> process, std::string msg);
+    std::optional<std::string> varName;
+    PrintInstruction(std::weak_ptr<Process> process, std::string msg,
+                     std::optional<std::string> varName = std::nullopt);
     void execute() override;
     std::uint64_t getLOC() override;
 };
@@ -82,4 +85,5 @@ struct ForInstruction : Instruction {
                    std::uint16_t repeats);
     void execute() override;
     std::uint64_t getLOC() override;
+    bool isControl() const override { return true; }
 };
